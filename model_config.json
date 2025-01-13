@@ -1,7 +1,10 @@
 {
     "project_name": "Smart Vine",
     "task_name": "Initial test",
+    "dataset_name": "dataset",
     "split_dataset": "False",
+    "load_data_from": "raw",
+    "save_datasets": "True",
     "split_ratio": 0.2,
     "img_size":{
         "width": 224,
