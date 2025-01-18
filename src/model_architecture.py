@@ -83,7 +83,7 @@ class EfficientNet(tf.keras.Model):
                                      strides = strides, 
                                      padding = "same", 
                                      use_bias = False,
-                                     kernel_init = kernel_init)(x)
+                                     kernel_initializer = kernel_init)(x)
         x  =  layers.BatchNormalization()(x)
         x  =  layers.Activation("swish")(x)
 
@@ -97,7 +97,6 @@ class EfficientNet(tf.keras.Model):
 
     def build_model(self):
         
-        num_filters  =  self.model_params['num_filters']
         inputs  =  layers.Input(shape = self.input_shape)
 
         # Unpacking block parameters
@@ -106,18 +105,24 @@ class EfficientNet(tf.keras.Model):
         head_params = self.config["model_params"]["head"]
 
         # Stem
-        x  =  self.conv_block(inputs, stem_params["num_filters"], stem_params["kernel_size"], stem_params["strides"])
+        x  =  self.conv_block(inputs, stem_params["num_filters"], 
+                              stem_params["kernel_size"],
+                              stem_params["kernel_init"], 
+                              stem_params["strides"])
 
         # Blocks
+        counter = 0
         for i in range(core_params["num_blocks"]):
             counter += i
             x = self.mb_conv_block(x, stem_params["num_filters"]*core_params["width_exp"]**counter, 
-                                   core_params["kernel_size"], 
+                                   core_params["kernel_size"],
+                                   core_params["kernel_init"], 
                                    core_params["strides"])
         
         # Head
         for i in range(head_params["num_layers"]):
-            x  =  tf.keras.layers.Dense(head_params["num_filters"]*core_params["width_exp"]**counter, kernel_initializer = head_params["kernel_init"])(x)
+            x  =  tf.keras.layers.Dense(head_params["num_filters"]*core_params["width_exp"]**counter,
+                                        kernel_initializer = head_params["kernel_init"])(x)
 
         x  =  layers.GlobalAveragePooling2D()(x)#
 
