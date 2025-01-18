@@ -3,7 +3,8 @@ from tensorflow.keras import layers, Model
 from tensorflow.keras.optimizers import Adam, Nadam, SGD
 from tensorflow.keras.losses import BinaryCrossentropy, SparseCategoricalCrossentropy
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
-from src.Utils.clearML import ClearMLConfig as ClearML
+from tensorflow.keras.metrics import Precision, Recall
+from src.clearML import ClearMLConfig as ClearML
 import pandas as pd
 import numpy as np
 import os
@@ -22,14 +23,16 @@ class EfficientNet(tf.keras.Model):
                 - expansion_factor (int): Expansion factor for the MBConv blocks.
                 - se_ratio (float): Squeeze-and-Excite ratio.
         """
+        # Passinf the model configuration
+        self.config = config
 
         # Passing the number of classes
         self.num_classes = num_classes
 
-        # Unpacking optmiser config
+        # Unpacking optmiser settings
         self.optmiser = config["optimiser"]
 
-        # Unpacking callback configs
+        # Unpacking callback settings
         self.reduce_plateau = config["reduce_plateau"]
 
         # Input shape
@@ -39,7 +42,7 @@ class EfficientNet(tf.keras.Model):
         self.model_params = config["model_params"]
         
         # Passing ClearML object
-        self.clearML  =  clearML
+        self.clearML = clearML
 
     def conv_block(self, x, filters, kernel_size, strides, activation = 'swish', use_bn = True):
         
@@ -65,7 +68,7 @@ class EfficientNet(tf.keras.Model):
 
         return layers.Multiply()([x, se])
 
-    def mb_conv_block(self, x, filters: int, kernel_size: int, strides: int):
+    def mb_conv_block(self, x, filters: int, kernel_size: int, kernel_init: str, strides: int):
 
         expansion_factor = self.model_params["expansion_factor"]
         input_channels  =  x.shape[-1]
@@ -76,7 +79,11 @@ class EfficientNet(tf.keras.Model):
             x  =  self.conv_block(x, expanded_channels, kernel_size = 1)
 
         # Depthwise convolution
-        x  =  layers.DepthwiseConv2D(kernel_size, strides = strides, padding = "same", use_bias = False)(x)
+        x  =  layers.DepthwiseConv2D(kernel_size, 
+                                     strides = strides, 
+                                     padding = "same", 
+                                     use_bias = False,
+                                     kernel_init = kernel_init)(x)
         x  =  layers.BatchNormalization()(x)
         x  =  layers.Activation("swish")(x)
 
@@ -93,20 +100,29 @@ class EfficientNet(tf.keras.Model):
         num_filters  =  self.model_params['num_filters']
         inputs  =  layers.Input(shape = self.input_shape)
 
+        # Unpacking block parameters
+        stem_params = self.config["model_params"]["stem"]
+        core_params = self.config["model_params"]["core"]
+        head_params = self.config["model_params"]["head"]
+
         # Stem
-        x  =  self.conv_block(inputs, num_filters, kernel_size = 3, strides = 2)
+        x  =  self.conv_block(inputs, stem_params["num_filters"], stem_params["kernel_size"], stem_params["strides"])
 
         # Blocks
-        x  =  self.mb_conv_block(x, num_filters, kernel_size = 3, strides = 1)
-        x  =  self.mb_conv_block(x, num_filters * 2, kernel_size = 3, strides = 2)
-        x  =  self.mb_conv_block(x, num_filters * 4, kernel_size = 3, strides = 2)
-
+        for i in range(core_params["num_blocks"]):
+            counter += i
+            x = self.mb_conv_block(x, stem_params["num_filters"]*core_params["width_exp"]**counter, 
+                                   core_params["kernel_size"], 
+                                   core_params["strides"])
+        
         # Head
-        x  =  self.conv_block(x, num_filters * 8, kernel_size = 1)
+        for i in range(head_params["num_layers"]):
+            x  =  tf.keras.layers.Dense(head_params["num_filters"]*core_params["width_exp"]**counter, kernel_initializer = head_params["kernel_init"])(x)
+
         x  =  layers.GlobalAveragePooling2D()(x)#
 
         if self.num_classes > 2:
-            x  =  layers.Dense(1, activation = "softmax")(x)
+            x = layers.Dense(self.num_classes, activation = "softmax")(x)
         else:
             x  =  layers.Dense(1, activation = "sigmoid")(x)
 
@@ -133,7 +149,7 @@ class EfficientNet(tf.keras.Model):
         self.compile(
             optimizer = optimizer,
             loss = loss,
-            metrics=['accuracy', 'Recall', 'Precision']
+            metrics=['accuracy', Recall() , Precision()]
         )
 
     def fit_model(self, df_train: pd.DataFrame, df_test: pd.DataFrame):
@@ -142,16 +158,15 @@ class EfficientNet(tf.keras.Model):
         X_test = df_test.drop(columns = ['label'])
         
         y_train = df_train['label']
-        y_test = df_train['label']
+        y_test = df_test['label']
 
-        # ReduceLROnPlateau callback
+        # Callbacks
         reduce_lr = ReduceLROnPlateau(
             factor = self.reduce_plateau['factor'],
             patience = self.reduce_plateau['patience'],
             verbose = 1
         )
-        
-        # ModelCheckpoint callback
+
         model_checkpoint = ModelCheckpoint(
             filepath = os.path.join("models", f'{self.config["task_name"]}_best_weights.keras'),
             monitor = "val_loss",
@@ -159,30 +174,24 @@ class EfficientNet(tf.keras.Model):
             verbose = 1
         )
 
-        # EarlyStopping configuration
         early_stopping = EarlyStopping(
             monitor = "val_loss",
             patience = self.model_params['patience'],
             min_delta = self.model_params['min_delta'],
-            restore_best_weights = True
+            restore_best_weights=True
         )
 
-        # Use the ClearML callback for logging during training (use the already instantiated `self.clearml`)
-        clearml_callback = ClearML.ClearMLCallback(self.clearml)
+        clearml_callback = ClearML.ClearMLCallback(self.clearML)
 
         # Fit the model
         hist = self.fit(
-            X_train, 
+            X_train,
             y_train,
             epochs = self.model_params['epochs'],
             batch_size = self.model_params['batch_size'],
             validation_data = (X_test, y_test),
             callbacks = [early_stopping, reduce_lr, model_checkpoint, clearml_callback],
-            verbose = 10
+            verbose = 1
         )
 
         return hist
-
-
-
-    

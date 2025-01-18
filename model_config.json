@@ -1,6 +1,4 @@
 {
-    "project_name": "Smart Vine",
-    "task_name": "Initial test",
     "dataset_name": "dataset",
     "split_dataset": "False",
     "process_images": "False",
@@ -11,15 +9,35 @@
         "width": 224,
         "height": 224 
     },
+    "clearML": {
+        "project_name": "Smart Vine",
+        "task_name": "Initial test"
+    },
     "model_params": {
         "batch_size": 64,
         "epochs": 200,
         "patience": 50,
         "min_delta": 1e-2,
-        "num_filters": 32,
         "expansion_factor": 6,
-        "se_ratio": 0.25
+        "se_ratio": 0.25,
+        "stem":{
+            "num_filters": 32,
+            "kernel_size": 3,
+            "kernel_init": "he_normal",
+            "stride": 1
+        },
+        "core":{
+            "num_blocks": 3,
+            "depth_exp": 2,
+            "kernel_size": 5,
+            "kernel_init": "he_normal",
+            "stride": 2
+        },
+        "head":{
+
+        }
     },
+
     "optmiser":{
         "type": "SGD",
         "initial_lr": 1e-2,
